@@ -1,5 +1,7 @@
 import json
 import random
+import socket
+import time
 from datetime import datetime
 
 # Configuração BD
@@ -49,13 +51,25 @@ def montar_mensagem(valores):
 
 
 def main():
+    # UDP não tem conexão, o socket só precisa existir para enviar,
+    # sem handshake previo com o destino (diferente do TCP)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     valores = valor_inicial()
 
-    # Teste temporário: gera algumas variações só para validar a lógica
-    for _ in range(3):
+    print(f"[{NO_ID}] Enviando para {GATEWAY_HOST}:{GATEWAY_PORT} a cada {INTERVALO_SEGUNDOS} segundos")
+
+    while True:
         valores = variar(valores)
         mensagem = montar_mensagem(valores)
-        print(f"[{NO_ID}] Mensagem montada: {mensagem}")
+        # Serializa a mensagem em JSON e converte para bytes, formato exigido pelo socket
+        linha = json.dumps(mensagem).encode("utf-8")
+
+        # sendto não avisa se o pacote realmente chegou, caracteristica do UDP
+        sock.sendto(linha, (GATEWAY_HOST, GATEWAY_PORT))
+        print(f"[{NO_ID}] Enviado: {mensagem}")
+
+        time.sleep(INTERVALO_SEGUNDOS)
+
 
 if __name__ == "__main__":
     main()
