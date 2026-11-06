@@ -58,18 +58,26 @@ def main():
 
     print(f"[{NO_ID}] Enviando para {GATEWAY_HOST}:{GATEWAY_PORT} a cada {INTERVALO_SEGUNDOS} segundos")
 
-    while True:
-        valores = variar(valores)
-        mensagem = montar_mensagem(valores)
-        # Serializa a mensagem em JSON e converte para bytes, formato exigido pelo socket
-        linha = json.dumps(mensagem).encode("utf-8")
+    try:
+        while True:
+            valores = variar(valores)
+            mensagem = montar_mensagem(valores)
+            # Serializa a mensagem em JSON e converte para bytes, formato exigido pelo socket
+            linha = json.dumps(mensagem).encode("utf-8")
 
-        # sendto não avisa se o pacote realmente chegou, caracteristica do UDP
-        sock.sendto(linha, (GATEWAY_HOST, GATEWAY_PORT))
-        print(f"[{NO_ID}] Enviado: {mensagem}")
+            # sendto não avisa se o pacote realmente chegou, caracteristica do UDP
+            sock.sendto(linha, (GATEWAY_HOST, GATEWAY_PORT))
+            print(f"[{NO_ID}] Enviado: {mensagem}")
 
-        time.sleep(INTERVALO_SEGUNDOS)
-
+            time.sleep(INTERVALO_SEGUNDOS)
+    
+    except KeyboardInterrupt:
+        # Permite encerrar o simulador com Ctrl+C sem gerar um traceback feio no terminal
+        print(f"\n[{NO_ID}] Encerrado pelo usuário.")
+    
+    finally:
+        # Garante que o socket seja fechado mesmo se o loop for interrompido
+        sock.close()
 
 if __name__ == "__main__":
     main()
