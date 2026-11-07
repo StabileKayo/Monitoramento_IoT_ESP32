@@ -2,6 +2,7 @@
 // + sensor capacitivo de umidade do solo.
 
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <DHT.h>
 #include <time.h>
 #include "secrets.h"
@@ -15,6 +16,18 @@ const unsigned long INTERVALO_MS = 10000;
 #define TIPO_DHT   DHT11
 #define PINO_SOLO  34   // precisa ser um pino ADC1 (32-39): o ADC2 não funciona com Wi-Fi ligado
 
+// IP do computador que roda o gateway, na mesma rede do ESP32.
+// NÃO use 127.0.0.1: para o ESP32 isso seria ele mesmo.
+// (no Windows: ipconfig | no Linux/macOS: ip a ou ifconfig)
+
+const uint16_t GATEWAY_PORTA_TCP = 5000;
+const uint16_t GATEWAY_PORTA_UDP = 5001;
+
+// Escolha o protocolo de envio: true = TCP, false = UDP
+const bool USAR_TCP = true;
+
+const char* NO_ID = "esp32_real";
+
 // Calibração do sensor capacitivo de solo (valores brutos do ADC, 0 a 4095).
 // Meça o seu: sensor no ar/seco -> VALOR_SECO; sensor na água -> VALOR_MOLHADO.
 // Quanto MAIS úmido, MENOR o valor lido (característica do sensor capacitivo).
@@ -25,8 +38,11 @@ const int VALOR_MOLHADO = 1300;
 const long FUSO_SEGUNDOS = -3 * 3600;
 
 DHT dht(PINO_DHT, TIPO_DHT);
+WiFiClient clienteTcp;
+WiFiUDP udp;
 
 unsigned long ultimoEnvio = 0;
+
 
 void conectarWifi() {
   Serial.printf("Conectando ao Wi-Fi '%s'", WIFI_SSID);
@@ -84,6 +100,39 @@ float lerUmidadeSolo() {
   Serial.printf("Solo bruto (ADC): %d -> %.1f%%\n", bruto, pct);
   return pct;
 }
+// Converte float em texto para o JSON. NaN (leitura que falhou) vira "null",
+// que o gateway grava como NULL no banco em vez de perder a leitura toda.
+
+void formatarValor(float valor, char* destino, size_t tamanho) {
+  if (isnan(valor)) {
+    snprintf(destino, tamanho, "null");
+  } else {
+    snprintf(destino, tamanho, "%.1f", valor);
+  }
+}
+
+bool enviarTcp(const char* json) {
+  // Se a conexão caiu (ou ainda não existe), tenta reconectar antes de enviar
+  if (!clienteTcp.connected()) {
+    clienteTcp.stop();
+    Serial.println("Conectando ao gateway (TCP)...");
+    if (!clienteTcp.connect(GATEWAY_HOST, GATEWAY_PORTA_TCP)) {
+      Serial.println("Gateway TCP indisponível.");
+      return false;
+    }
+  }
+  // O "\n" ao final é o delimitador que o gateway usa para separar as mensagens
+  clienteTcp.print(json);
+  clienteTcp.print("\n");
+  return true;
+}
+
+bool enviarUdp(const char* json) {
+  // UDP não tem conexão nem confirmação: cada leitura é um datagrama avulso
+  udp.beginPacket(GATEWAY_HOST, GATEWAY_PORTA_UDP);
+  udp.print(json);
+  return udp.endPacket() == 1;
+}
 
 void setup() {
   Serial.begin(115200);
@@ -100,6 +149,7 @@ void loop() {
   if (millis() - ultimoEnvio < INTERVALO_MS) return;
   ultimoEnvio = millis();
 
+  // 1) Lê os sensores
   float temperatura = dht.readTemperature();   // °C
   float umidadeAr   = dht.readHumidity();      // %
   float umidadeSolo = lerUmidadeSolo();        // %
@@ -108,7 +158,24 @@ void loop() {
     Serial.println("Falha ao ler o DHT11 (confira ligação e pull-up).");
   }
 
-  Serial.printf("Temperatura: %.1f C | Ar: %.1f %% | Solo: %.1f %%\n", temperatura, umidadeAr, umidadeSolo);
+  // 2) Monta o JSON (mesmo formato dos nós simulados), sem depender de bibliotecas extras
+  char tsCampo[48] = "";
   char ts[24];
-  if (obterTimestamp(ts, sizeof(ts))) Serial.printf("Timestamp: %s\n", ts);
+  if (obterTimestamp(ts, sizeof(ts))) {
+    snprintf(tsCampo, sizeof(tsCampo), "\"timestamp\":\"%s\",", ts);
+  }
+
+  char t[12], ua[12], us[12];
+  formatarValor(temperatura, t, sizeof(t));
+  formatarValor(umidadeAr, ua, sizeof(ua));
+  formatarValor(umidadeSolo, us, sizeof(us));
+
+  char json[256];
+  snprintf(json, sizeof(json),
+           "{\"no_id\":\"%s\",\"protocolo\":\"%s\",%s\"temperatura\":%s,\"umidade_ar\":%s,\"umidade_solo\":%s}",
+           NO_ID, USAR_TCP ? "TCP" : "UDP", tsCampo, t, ua, us);
+
+  // 3) Envia ao gateway
+  bool ok = USAR_TCP ? enviarTcp(json) : enviarUdp(json);
+  Serial.printf("%s: %s\n", ok ? "Enviado" : "FALHA ao enviar", json);
 }
