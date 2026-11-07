@@ -26,14 +26,44 @@ const unsigned long INTERVALO_MS = 10000;
 // Pinos
 #define PINO_DHT   4
 #define TIPO_DHT   DHT11
+#define PINO_SOLO  34   // precisa ser um pino ADC1 (32-39): o ADC2 não funciona com Wi-Fi ligado
+
+// Calibração do sensor capacitivo de solo (valores brutos do ADC, 0 a 4095).
+// Meça o seu: sensor no ar/seco -> VALOR_SECO; sensor na água -> VALOR_MOLHADO.
+// Quanto MAIS úmido, MENOR o valor lido (característica do sensor capacitivo).
+const int VALOR_SECO    = 3000;
+const int VALOR_MOLHADO = 1300;
 
 DHT dht(PINO_DHT, TIPO_DHT);
 
 unsigned long ultimoEnvio = 0;
+
+// Lê o solo várias vezes e tira a média, porque o ADC do ESP32 é bem ruidoso.
+// Retorna a umidade em % (0 = seco, 100 = molhado).
+float lerUmidadeSolo() {
+  long soma = 0;
+  const int AMOSTRAS = 10;
+  for (int i = 0; i < AMOSTRAS; i++) {
+    soma += analogRead(PINO_SOLO);
+    delay(10);
+  }
+  int bruto = soma / AMOSTRAS;
+
+  // Converte o valor bruto em porcentagem (invertido: valor alto = seco)
+  float pct = (float)(VALOR_SECO - bruto) * 100.0 / (float)(VALOR_SECO - VALOR_MOLHADO);
+  pct = constrain(pct, 0.0, 100.0);
+
+  // Mostra o valor bruto no Serial: útil para calibrar VALOR_SECO e VALOR_MOLHADO
+  Serial.printf("Solo bruto (ADC): %d -> %.1f%%\n", bruto, pct);
+  return pct;
+}
+
 void setup() {
   Serial.begin(115200);
   delay(500);
   dht.begin();
+  analogReadResolution(12);                     // 0 a 4095
+  analogSetPinAttenuation(PINO_SOLO, ADC_11db); // faixa de ~0 a 3,3V
   conectarWifi();
 }
 
@@ -44,10 +74,11 @@ void loop() {
 
   float temperatura = dht.readTemperature();   // °C
   float umidadeAr   = dht.readHumidity();      // %
+  float umidadeSolo = lerUmidadeSolo();        // %
 
   if (isnan(temperatura) || isnan(umidadeAr)) {
     Serial.println("Falha ao ler o DHT11 (confira ligação e pull-up).");
   }
 
-  Serial.printf("Temperatura: %.1f C | Umidade do ar: %.1f %%\n", temperatura, umidadeAr);
+  Serial.printf("Temperatura: %.1f C | Ar: %.1f %% | Solo: %.1f %%\n", temperatura, umidadeAr, umidadeSolo);
 }
