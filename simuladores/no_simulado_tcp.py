@@ -60,8 +60,28 @@ def conectar():
 
 
 def main():
+    valores = valor_inicial()
     sock =conectar()
-    print(f"[{NO_ID}] Conexão estabelecida, pronta para enviar leituras")
+    
+    while True:
+        valores = variar(valores)
+        mensagem = montar_mensagem(valores)
+        # TCP é um fluxo continuo de bytes, sem limites de mensagem, por isso
+        # adicionamos "\n" ao final de cada JSON, para o gateway saber onde
+        # uma mensagem termina e a proxima começa
+        linha = (json.dumps(mensagem) + "\n").encode("utf-8")
+
+        try:
+            sock.sendall(linha)
+            print(f"[{NO_ID}] Enviado: {mensagem}")
+        except (BrokenPipeError, ConnectionResetError, OSError) as erro:
+            # Gateway caiu ou a conexão foi fechada - fecha o socket morto e 
+            # reconecta antes de tentar enviar de novo
+            print(f"[{NO_ID}] Conexão perdida ({erro}). Reconectando...")
+            sock.close()
+            sock = conectar()
+
+        time.sleep(INTERVALO_SEGUNDOS)
 
 
 if __name__ == "__main__":
