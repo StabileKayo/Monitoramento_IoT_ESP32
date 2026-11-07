@@ -1,7 +1,7 @@
 import json
 import socket
 import threading
-
+from datetime import datetime
 import mariadb
 # Configuração Banco de dados
 
@@ -32,6 +32,14 @@ def conectar_banco():
 def salvar_leituras(conexao, mensagem: dict):
     # Insere uma leitura na tabela "leituras". Usa .get() em vez de acesso direto
     # para não quebrar caso algum campo venha faltando na mensagem
+    if not isinstance(mensagem, dict) or not mensagem.get("no_id"):
+        raise ValueError("mensagem sem no_id")
+
+    # O ESP32 pode não ter conseguido sincronizar o relógio via NTP e enviar sem
+    # timestamp. Nesse caso usamos a hora do gateway, para não perder a leitura
+    # (a coluna timestamp_no é NOT NULL)
+    timestamp = mensagem.get("timestamp") or datetime.now().isoformat(timespec="seconds")
+
     sql = """
         INSERT INTO leituras
             (no_id, protocolo, timestamp_no, temperatura, umidade_ar, umidade_solo)
@@ -42,15 +50,17 @@ def salvar_leituras(conexao, mensagem: dict):
     valores = (
         mensagem.get("no_id"),
         mensagem.get("protocolo"),
-        mensagem.get("timestamp"),
-        mensagem.get("temperatura"),
+        timestamp,
+        mensagem.get("temperatura"),   # None (null no JSON) vira NULL no banco
         mensagem.get("umidade_ar"),
-        mensagem.get("umidade_solo")
+        mensagem.get("umidade_solo"),
     )
     cursor = conexao.cursor()
-    cursor.execute(sql, valores)
-    conexao.commit()
-    cursor.close()
+    try:
+        cursor.execute(sql, valores)
+        conexao.commit()
+    finally:
+        cursor.close()
 
 
 def processar_mensagem(protocolo_esperado, linha_bytes, conexao, origem=""):
@@ -60,9 +70,12 @@ def processar_mensagem(protocolo_esperado, linha_bytes, conexao, origem=""):
         mensagem = json.loads(linha_bytes.decode("utf-8"))
         salvar_leituras(conexao, mensagem)
         print(f"[{protocolo_esperado}{origem}] Gravado: {mensagem}")
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         # Pacote corrompido ou não-JSON: registra e segue em frente
         print(f"[{protocolo_esperado}{origem}] Mensagem inválida (não era JSON): {linha_bytes!r}")
+    except ValueError as erro:
+        # JSON válido, mas sem os campos mínimos
+        print(f"[{protocolo_esperado}{origem}] Mensagem rejeitada ({erro}): {linha_bytes!r}")
     except mariadb.Error as erro:
         # Falha no banco (conexão caiu, tabela errada, etc): registra sem derrubar o listener
         print(f"[{protocolo_esperado}{origem}] Erro ao gravar no banco de dados: {erro}")
