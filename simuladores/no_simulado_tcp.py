@@ -1,4 +1,6 @@
+import json
 import random
+from datetime import datetime
 # Configuração banco de dados
 
 GATEWAY_HOST = "127.0.0.1"
@@ -31,13 +33,23 @@ def variar(valores):
     return novos
 
 
+def montar_mensagem(valores):
+    mensagem = {
+        "no_id": NO_ID,
+        "protocolo": "TCP",
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+    }
+    mensagem.update(valores)
+    return mensagem
+
+
 def main():
     valores = valor_inicial()
-    print(f"[{NO_ID}] Valores iniciais: {valores}")
 
     for _ in range(3):
         valores = variar(valores)
-        print(f"[{NO_ID}] Novo valor simulado: {valores}")
+        mensagem = montar_mensagem(valores)
+        print(f"[{NO_ID}] Mensagem montada: {mensagem}")
 
 
 if __name__ == "__main__":
