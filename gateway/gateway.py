@@ -54,19 +54,32 @@ def processar_mensagem(protocolo_esperado, linha_bytes, conexao, origem=""):
     # Um pacote inválido de um nó não pode travar o recebimento dos demais
     try:
         mensagem = json.loads(linha_bytes.decode("utf-8"))
-        salvar_leitura(conexao, mensagem)
+        salvar_leituras(conexao, mensagem)
         print(f"[{protocolo_esperado}{origem}] Gravado: {mensagem}")
     except json.JSONDecodeError:
         # Pacote corrompido ou não-JSON: registra e segue em frente
-        print(f"[{protocolo_esperado}{origem}] Mnesagem inválida (não era JSON): {linha_bytes!r}")
+        print(f"[{protocolo_esperado}{origem}] Mensagem inválida (não era JSON): {linha_bytes!r}")
     except mariadb.Error as erro:
         # Falha no banco (conexão caiu, tabela errada, etc): registra sem derrubar o listener
         print(f"[{protocolo_esperado}{origem}] Erro ao gravar no banco de dados: {erro}")
 
 
+def escutar_udp():
+    conexao_db = conectar_banco()
+    servidor = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    servidor.bind((UDP_HOST, UDP_PORT))
+    print(f"[UDP] Escutando em {UDP_HOST}:{UDP_PORT}")
+
+    # UDP não tem conceito de "conexão" cada datagrama é uma mensagem completa e independente
+    # então basta receber e processar em loop
+    while True:
+        dados, endereco = servidor.recvfrom(1024)
+        processar_mensagem("UDP", dados, conexao_db, origem=f" {endereco}")
+
+
 def main():
     print("Gateway rodando. Pressione Ctrl+C para encerrar.")
-
+    escutar_udp()
 
 if __name__ == "__main__":
     main()
