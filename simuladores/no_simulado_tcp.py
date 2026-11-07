@@ -1,6 +1,8 @@
 import json
 import random
+import socket
 from datetime import datetime
+import time
 # Configuração banco de dados
 
 GATEWAY_HOST = "127.0.0.1"
@@ -43,13 +45,23 @@ def montar_mensagem(valores):
     return mensagem
 
 
-def main():
-    valores = valor_inicial()
+def conectar():
+    # Tenta conectar ao gateway, com nova tentativa a cada 3s se falhar
+    # Isso permite ligar o simulador antes mesmo do gateway estar de pé
+    while True:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((GATEWAY_HOST, GATEWAY_PORT))
+            print(f"[{NO_ID}] Conectado ao gateway em {GATEWAY_HOST}:{GATEWAY_PORT}")
+            return sock
+        except (ConnectionRefusedError, OSError) as erro:
+            print(f"[{NO_ID}] Gateway indisponivel ({erro}). Tentando novamente em 3s...")
+            time.sleep(3)
 
-    for _ in range(3):
-        valores = variar(valores)
-        mensagem = montar_mensagem(valores)
-        print(f"[{NO_ID}] Mensagem montada: {mensagem}")
+
+def main():
+    sock =conectar()
+    print(f"[{NO_ID}] Conexão estabelecida, pronta para enviar leituras")
 
 
 if __name__ == "__main__":
