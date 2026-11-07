@@ -116,8 +116,21 @@ def escutar_tcp():
 
 
 def main():
+    # Cada listener roda em sua própria thrad, como daemon, para que
+    # o programa principal encerre ambos ao sair (Ctrl+C)
+    thread_tcp = threading.Thread(target=escutar_tcp, daemon=True)
+    thread_udp = threading.Thread(target=escutar_udp, daemon=True)
+
+    thread_tcp.start()
+    thread_udp.start()
+
     print("Gateway rodando. Pressione Ctrl+C para encerrar.")
-    escutar_tcp()
+    try:
+        # Mantem a thread principal viva enquanto as threads daemon trabalham
+        while True:
+            threading.Event().wait(1)
+    except KeyboardInterrupt:
+        print("\nGateway encerrado.")
 
 
 if __name__ == "__main__":
