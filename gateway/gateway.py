@@ -21,6 +21,8 @@ TCP_PORT = 5000
 UDP_HOST = "0.0.0.0"
 UDP_PORT = 5001
 
+# Se um nó TCP ficar tanto tempo sem enviar nada, consideramos a conexão morta
+TCP_TIMEOUT_SEGUNDOS = 120
 
 def conectar_banco():
     # Abre uma nova conexão com o banco de dados. Cada thread chama isso uma vez,
@@ -88,6 +90,7 @@ def tratar_cliente_tcp(conn_socket, endereco):
     try:
         # Cada thread tem a sua própria conexão com o banco
         conexao_db = conectar_banco()
+        conn_socket.settimeout(TCP_TIMEOUT_SEGUNDOS)
         while True:
             dados = conn_socket.recv(1024)
             if not dados:
@@ -101,10 +104,19 @@ def tratar_cliente_tcp(conn_socket, endereco):
                 linha, buffer = buffer.split(b"\n", 1)
                 if linha.strip():
                     processar_mensagem("TCP", linha, conexao_db, origem=f" {endereco}")
+    except socket.timeout:
+        print(f"[TCP] no {endereco} ficou {TCP_TIMEOUT_SEGUNDOS}s sem enviar. Encerrando conexão.")
+    except mariadb.Error as erro:
+        print(f"[TCP] Não foi possível conectar ao banco para o nó {endereco}: {erro}")
+    except OSError as erro:
+        print(f"[TCP] Erro de rede com o nó {endereco}: {erro}")
     finally:
         conn_socket.close()
         if conexao_db is not None:
-            conexao_db.close()
+            try:
+                conexao_db.close()
+            except mariadb.Error:
+                pass
 
 
 def escutar_tcp():
