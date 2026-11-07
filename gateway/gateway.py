@@ -79,6 +79,16 @@ def processar_mensagem(protocolo_esperado, linha_bytes, conexao, origem=""):
     except mariadb.Error as erro:
         # Falha no banco (conexão caiu, tabela errada, etc): registra sem derrubar o listener
         print(f"[{protocolo_esperado}{origem}] Erro ao gravar no banco de dados: {erro}")
+        try:
+            conexao.close()
+        except mariadb.Error:
+            pass
+        try:
+            conexao = conectar_banco()
+            print(f"[{protocolo_esperado}{origem}] Reconectando ao banco de dados")
+        except mariadb.Error as erro_reconexao:
+            print(f"[{protocolo_esperado}{origem}] Reconexão falhou: {erro_reconexao}")
+    return conexao
 
 
 def escutar_udp():
@@ -91,7 +101,7 @@ def escutar_udp():
     # então basta receber e processar em loop
     while True:
         dados, endereco = servidor.recvfrom(1024)
-        processar_mensagem("UDP", dados, conexao_db, origem=f" {endereco}")
+        conexao_db = processar_mensagem("UDP", dados, conexao_db, origem=f" {endereco}")
 
 
 def tratar_cliente_tcp(conn_socket, endereco):
@@ -116,7 +126,7 @@ def tratar_cliente_tcp(conn_socket, endereco):
             while b"\n" in buffer:
                 linha, buffer = buffer.split(b"\n", 1)
                 if linha.strip():
-                    processar_mensagem("TCP", linha, conexao_db, origem=f" {endereco}")
+                    conexao_db = processar_mensagem("TCP", linha, conexao_db, origem=f" {endereco}")
     except socket.timeout:
         print(f"[TCP] no {endereco} ficou {TCP_TIMEOUT_SEGUNDOS}s sem enviar. Encerrando conexão.")
     except mariadb.Error as erro:
