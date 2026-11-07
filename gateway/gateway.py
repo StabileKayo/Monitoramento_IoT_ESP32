@@ -79,28 +79,35 @@ def escutar_udp():
         processar_mensagem("UDP", dados, conexao_db, origem=f" {endereco}")
 
 
-def tratar_cliente_tcp(conn_socket, endereco, conexao_db):
+def tratar_cliente_tcp(conn_socket, endereco):
+    # Roda em uma thread própria por nó: assim vários nós TCP
+    # podem ficar conectados ao mesmo tempo sem um bloquear o outro
     print(f"[TCP] Novo nó conectado: {endereco}")
     buffer = b""
-    with conn_socket:
+    conexao_db = None
+    try:
+        # Cada thread tem a sua própria conexão com o banco
+        conexao_db = conectar_banco()
         while True:
             dados = conn_socket.recv(1024)
             if not dados:
                 print(f"[TCP] no {endereco} desconectou.")
                 break
-            # TCP é um fluxo continuo de bytes, sem limites de mensagem:
-            # por isso acumulamos num buffer e so processamos quando
+            # TCP é um fluxo contínuo de bytes, sem limites de mensagem:
+            # por isso acumulamos num buffer e só processamos quando
             # encontramos o delimitador \n que marca o fim de uma leitura
-
             buffer += dados
             while b"\n" in buffer:
                 linha, buffer = buffer.split(b"\n", 1)
                 if linha.strip():
                     processar_mensagem("TCP", linha, conexao_db, origem=f" {endereco}")
+    finally:
+        conn_socket.close()
+        if conexao_db is not None:
+            conexao_db.close()
 
 
 def escutar_tcp():
-    conexao_db = conectar_banco()
     servidor = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     # Permite reiniciar o gateway rapidamente sem esperar a porta ser liberada pelo SO
     servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -110,9 +117,12 @@ def escutar_tcp():
 
     while True:
         conn_socket, endereco = servidor.accept()
-        # Trata um nó TCP de cada vez nesta thread, mantendo simples por ora
-        # (multiplos nós TCP simultaneos serão resolvidos com threading)
-        tratar_cliente_tcp(conn_socket, endereco, conexao_db)
+        # Uma thread por nó TCP conectado, para atender vários simultaneamente
+        threading.Thread(
+            target=tratar_cliente_tcp,
+            args=(conn_socket, endereco),
+            daemon=True,
+        ).start()
 
 
 def main():
