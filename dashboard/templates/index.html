@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Monitoramento IoT</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
   :root {
     --fundo: #eaf0ec;
@@ -46,6 +47,24 @@
   .medida b { display: block; font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
   .medida span { color: var(--suave); font-size: .8rem; }
 
+  .graficos { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .painel { background: var(--painel); border: 1px solid var(--linha); border-radius: 8px; padding: 16px; }
+  .painel canvas { width: 100% !important; height: 240px !important; }
+
+    .controles { display: flex; gap: 6px; flex-wrap: wrap; }
+  .controles button {
+    border: 1px solid var(--linha); background: var(--painel); color: var(--tinta);
+    padding: 6px 14px; border-radius: 6px; font: inherit; cursor: pointer;
+  }
+  .controles button[aria-pressed="true"] { background: var(--tinta); color: var(--fundo); border-color: var(--tinta); }
+  .controles button:focus-visible { outline: 2px solid var(--ok); outline-offset: 2px; }
+
+  .tabela-rolagem { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--linha); white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--suave); font-weight: 500; }
+
   .vazio { color: var(--suave); padding: 24px 0; }
   #erro { color: var(--alerta); margin-bottom: 12px; }
 </style>
@@ -57,10 +76,37 @@
       <h1>Monitoramento IoT</h1>
       <div class="sub" id="sub">Carregando…</div>
     </div>
+    <div class="controles" id="periodos" role="group" aria-label="Período">
+      <button data-horas="1">1 h</button>
+      <button data-horas="6" aria-pressed="true">6 h</button>
+      <button data-horas="24">24 h</button>
+      <button data-horas="168">7 dias</button>
+    </div>
   </header>
 
   <div id="erro" role="alert"></div>
   <section class="nos" id="nos" aria-label="Estado dos nós"></section>
+  <section class="graficos">
+    <div class="painel"><h2>Temperatura (°C)</h2><canvas id="g-temperatura"></canvas></div>
+    <div class="painel"><h2>Umidade do ar (%)</h2><canvas id="g-umidade_ar"></canvas></div>
+    <div class="painel"><h2>Umidade do solo (%)</h2><canvas id="g-umidade_solo"></canvas></div>
+  </section>
+  <section class="painel">
+    <h2 id="titulo-tabela">Estatísticas do período</h2>
+    <div class="tabela-rolagem">
+      <table>
+        <thead>
+          <tr>
+            <th>Nó</th><th>Leituras</th>
+            <th>Temp. média</th><th>mín</th><th>máx</th>
+            <th>Ar médio</th><th>mín</th><th>máx</th>
+            <th>Solo médio</th><th>mín</th><th>máx</th>
+          </tr>
+        </thead>
+        <tbody id="tabela"></tbody>
+      </table>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -68,8 +114,13 @@ const LIMITE_SEM_SINAL = {{ limite_sem_sinal }};   // segundos, vem do app.py
 const ATUALIZA_A_CADA_MS = 10000;
 const PALETA = ["#2e7d4f", "#c2571f", "#2f6fb0", "#8a5bb5", "#b08a1e", "#1e8a8a"];
 
+const GRANDEZAS = ["temperatura", "umidade_ar", "umidade_solo"];
+const UNIDADES = { temperatura: "°C", umidade_ar: "%", umidade_solo: "%" };
+
 let horas = 6;
 const coresPorNo = {};
+
+const graficos = {};
 
 // Cada nó mantém sempre a mesma cor, em todos os gráficos e cards
 function corDoNo(id) {
@@ -106,15 +157,80 @@ function desenharNos(ultimas) {
   }).join("");
 }
 
+function criarGrafico(grandeza) {
+  const ctx = document.getElementById("g-" + grandeza);
+  graficos[grandeza] = new Chart(ctx, {
+    type: "line",
+    data: { datasets: [] },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      parsing: false,
+      interaction: { mode: "nearest", intersect: false },
+      elements: { point: { radius: 0, hitRadius: 8 }, line: { borderWidth: 2, tension: 0.2 } },
+      scales: {
+        x: {
+          type: "linear",
+          ticks: {
+            maxTicksLimit: 6,
+            callback: v => new Date(v).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+          }
+        },
+        y: { title: { display: true, text: UNIDADES[grandeza] } }
+      },
+      plugins: {
+        tooltip: {
+          callbacks: {
+            title: itens => new Date(itens[0].parsed.x).toLocaleString("pt-BR"),
+            label: item => `${item.dataset.label}: ${item.parsed.y} ${UNIDADES[grandeza]}`
+          }
+        }
+      }
+    }
+  });
+}
+
+function desenharGraficos(series) {
+  const nos = Object.keys(series).sort();
+  GRANDEZAS.forEach(g => {
+    graficos[g].data.datasets = nos.map(no => ({
+      label: no,
+      data: series[no][g],
+      borderColor: corDoNo(no),
+      backgroundColor: corDoNo(no),
+      spanGaps: true
+    }));
+    graficos[g].update();
+  });
+}
+
+function desenharTabela(estatisticas) {
+  const corpo = document.getElementById("tabela");
+  if (!estatisticas.length) {
+    corpo.innerHTML = '<tr><td colspan="11" class="vazio">Sem leituras neste período.</td></tr>';
+    return;
+  }
+  corpo.innerHTML = estatisticas.map(e => `
+    <tr>
+      <td>${e.no_id}</td><td>${e.total}</td>
+      <td>${fmt(e.temp_media)}</td><td>${fmt(e.temp_min)}</td><td>${fmt(e.temp_max)}</td>
+      <td>${fmt(e.ar_media)}</td><td>${fmt(e.ar_min)}</td><td>${fmt(e.ar_max)}</td>
+      <td>${fmt(e.solo_media)}</td><td>${fmt(e.solo_min)}</td><td>${fmt(e.solo_max)}</td>
+    </tr>`).join("");
+}
+
 async function atualizar() {
   const erro = document.getElementById("erro");
   try {
-    const resumo = await fetch(`/api/resumo?horas=${horas}`).then(r => {
-      if (!r.ok) throw new Error("resumo");
-      return r.json();
-    });
+    const [resumo, series] = await Promise.all([
+        fetch(`/api/resumo?horas=${horas}`).then(r => { if (!r.ok) throw new Error("resumo"); return r.json(); }),
+        fetch(`/api/series?horas=${horas}`).then(r => { if (!r.ok) throw new Error("séries"); return r.json(); })
+    ]);
     erro.textContent = "";
     desenharNos(resumo.ultimas);
+    desenharTabela(resumo.estatisticas);
+    desenharGraficos(series);
     document.getElementById("sub").textContent =
       `${resumo.total_geral} leituras no banco · atualizado às ${new Date().toLocaleTimeString("pt-BR")}`;
   } catch (e) {
@@ -122,6 +238,16 @@ async function atualizar() {
   }
 }
 
+document.getElementById("periodos").addEventListener("click", ev => {
+  const botao = ev.target.closest("button");
+  if (!botao) return;
+  horas = Number(botao.dataset.horas);
+  document.querySelectorAll("#periodos button").forEach(b => b.setAttribute("aria-pressed", b === botao));
+  document.getElementById("titulo-tabela").textContent = "Estatísticas do período (" + botao.textContent + ")";
+  atualizar();
+});
+
+GRANDEZAS.forEach(criarGrafico);
 atualizar();
 setInterval(atualizar, ATUALIZA_A_CADA_MS);
 </script>
