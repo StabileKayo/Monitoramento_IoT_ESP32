@@ -12,6 +12,9 @@ DB_CONFIG = {
 
 app = Flask(__name__)
 
+# Quantos pontos, no máximo, cada nó terá em cada gráfico
+PONTOS_POR_GRAFICO = 300
+
 
 def consultar(sql, params=()):
     # Abre uma conexão por requisição (simples e suficiente para um dashboard local)
@@ -82,6 +85,41 @@ def api_resumo():
         "ultimas": ultimas,
     })
 
+
+@app.route("/api/series")
+def api_series():
+    horas = horas_da_requisicao()
+
+    # Agrupa as leituras em "baldes" de tempo para limitar o número de pontos:
+    # com 24h de dados a 10s de intervalo seriam 8.640 pontos por nó
+    balde = max(10, (horas * 3600) // PONTOS_POR_GRAFICO)
+
+    # balde é um int calculado aqui (nunca vem direto do usuário), então é seguro no f-string
+    linhas = consultar(
+        f"""
+        SELECT no_id,
+               FLOOR(UNIX_TIMESTAMP(recebido_em) / {balde}) * {balde} AS t,
+               AVG(temperatura)  AS temperatura,
+               AVG(umidade_ar)   AS umidade_ar,
+               AVG(umidade_solo) AS umidade_solo
+        FROM leituras
+        WHERE recebido_em >= NOW() - INTERVAL ? HOUR
+        GROUP BY no_id, t
+        ORDER BY no_id, t
+        """,
+        (horas,),
+    )
+
+    series = {}
+    for linha in linhas:
+        no = series.setdefault(linha["no_id"], {"temperatura": [], "umidade_ar": [], "umidade_solo": []})
+        x = int(linha["t"]) * 1000  # milissegundos, formato que o JavaScript espera
+        for grandeza in ("temperatura", "umidade_ar", "umidade_solo"):
+            valor = linha[grandeza]
+            no[grandeza].append({"x": x, "y": None if valor is None else round(float(valor), 1)})
+
+    return jsonify(series)
+    
 
 if __name__ == "__main__":
     # host 0.0.0.0 permite abrir o dashboard de outro aparelho da rede (ex: celular)
