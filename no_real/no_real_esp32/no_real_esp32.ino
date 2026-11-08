@@ -145,6 +145,14 @@ void setup() {
 }
 
 void loop() {
+  // Se o Wi-Fi caiu, tenta voltar e pula este ciclo
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("Wi-Fi perdido. Reconectando...");
+    WiFi.disconnect();
+    conectarWifi();
+    return;
+  }
+  
   // millis() em vez de delay(): o loop continua livre e o intervalo não acumula atraso
   if (millis() - ultimoEnvio < INTERVALO_MS) return;
   ultimoEnvio = millis();
