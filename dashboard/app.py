@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, render_template, request
 import mariadb
 
 # Mesmo banco usado pelo gateway.
@@ -14,6 +14,9 @@ app = Flask(__name__)
 
 # Quantos pontos, no máximo, cada nó terá em cada gráfico
 PONTOS_POR_GRAFICO = 300
+
+# Um nó sem enviar nada por mais que isso é mostrado como "sem sinal"
+LIMITE_SEM_SINAL_SEGUNDOS = 90
 
 
 def consultar(sql, params=()):
@@ -38,6 +41,10 @@ def horas_da_requisicao():
     return max(1, min(horas, 720))
 
 
+@app.route("/")
+def index():
+    return render_template("index.html", limite_sem_sinal=LIMITE_SEM_SINAL_SEGUNDOS)
+    
 @app.route("/api/resumo")
 def api_resumo():
     horas = horas_da_requisicao()
@@ -119,7 +126,7 @@ def api_series():
             no[grandeza].append({"x": x, "y": None if valor is None else round(float(valor), 1)})
 
     return jsonify(series)
-    
+
 
 if __name__ == "__main__":
     # host 0.0.0.0 permite abrir o dashboard de outro aparelho da rede (ex: celular)

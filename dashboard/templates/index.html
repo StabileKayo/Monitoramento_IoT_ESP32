@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monitoramento IoT</title>
+<style>
+  :root {
+    --fundo: #eaf0ec;
+    --painel: #f8faf8;
+    --tinta: #1b2a22;
+    --suave: #5d6f64;
+    --linha: #cbd8d0;
+    --ok: #2e7d4f;
+    --alerta: #b4532a;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #17211b;
+      --painel: #1f2c25;
+      --tinta: #e4ede7;
+      --suave: #96a89c;
+      --linha: #33463b;
+      --ok: #5bc08a;
+      --alerta: #e08a5f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo); color: var(--tinta); }
+  main { max-width: 1200px; margin: 0 auto; padding: 24px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: end; gap: 12px; margin-bottom: 24px; }
+  h1 { font-size: 1.6rem; margin: 0; font-weight: 650; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; font-weight: 600; }
+  .sub { color: var(--suave); font-size: .9rem; margin-top: 4px; }
+
+  .nos { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin-bottom: 24px; }
+  .no { background: var(--painel); border: 1px solid var(--linha); border-left-width: 5px; border-radius: 8px; padding: 14px 16px; }
+  .no-topo { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .no-nome { font-weight: 650; }
+  .no-proto { color: var(--suave); font-size: .85rem; }
+  .estado { font-size: .85rem; margin: 2px 0 10px; }
+  .estado.ok { color: var(--ok); }
+  .estado.off { color: var(--alerta); }
+  .medidas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .medida b { display: block; font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .medida span { color: var(--suave); font-size: .8rem; }
+
+  .vazio { color: var(--suave); padding: 24px 0; }
+  #erro { color: var(--alerta); margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Monitoramento IoT</h1>
+      <div class="sub" id="sub">Carregando…</div>
+    </div>
+  </header>
+
+  <div id="erro" role="alert"></div>
+  <section class="nos" id="nos" aria-label="Estado dos nós"></section>
+</main>
+
+<script>
+const LIMITE_SEM_SINAL = {{ limite_sem_sinal }};   // segundos, vem do app.py
+const ATUALIZA_A_CADA_MS = 10000;
+const PALETA = ["#2e7d4f", "#c2571f", "#2f6fb0", "#8a5bb5", "#b08a1e", "#1e8a8a"];
+
+let horas = 6;
+const coresPorNo = {};
+
+// Cada nó mantém sempre a mesma cor, em todos os gráficos e cards
+function corDoNo(id) {
+  if (!(id in coresPorNo)) coresPorNo[id] = PALETA[Object.keys(coresPorNo).length % PALETA.length];
+  return coresPorNo[id];
+}
+
+const fmt = (v, casas = 1) => (v === null || v === undefined) ? "–" : Number(v).toFixed(casas);
+
+function tempoRelativo(seg) {
+  if (seg < 60) return `há ${seg} s`;
+  if (seg < 3600) return `há ${Math.floor(seg / 60)} min`;
+  return `há ${Math.floor(seg / 3600)} h`;
+}
+
+function desenharNos(ultimas) {
+  const caixa = document.getElementById("nos");
+  if (!ultimas.length) {
+    caixa.innerHTML = '<div class="vazio">Nenhuma leitura no banco ainda. Inicie o gateway e os nós.</div>';
+    return;
+  }
+  caixa.innerHTML = ultimas.map(n => {
+    const online = n.idade_s <= LIMITE_SEM_SINAL;
+    return `
+      <article class="no" style="border-left-color:${corDoNo(n.no_id)}">
+        <div class="no-topo"><span class="no-nome">${n.no_id}</span><span class="no-proto">${n.protocolo}</span></div>
+        <div class="estado ${online ? "ok" : "off"}">${online ? "Recebendo" : "Sem sinal"}, última leitura ${tempoRelativo(n.idade_s)}</div>
+        <div class="medidas">
+          <div class="medida"><b>${fmt(n.temperatura)}°</b><span>Temperatura</span></div>
+          <div class="medida"><b>${fmt(n.umidade_ar, 0)}%</b><span>Ar</span></div>
+          <div class="medida"><b>${fmt(n.umidade_solo, 0)}%</b><span>Solo</span></div>
+        </div>
+      </article>`;
+  }).join("");
+}
+
+async function atualizar() {
+  const erro = document.getElementById("erro");
+  try {
+    const resumo = await fetch(`/api/resumo?horas=${horas}`).then(r => {
+      if (!r.ok) throw new Error("resumo");
+      return r.json();
+    });
+    erro.textContent = "";
+    desenharNos(resumo.ultimas);
+    document.getElementById("sub").textContent =
+      `${resumo.total_geral} leituras no banco · atualizado às ${new Date().toLocaleTimeString("pt-BR")}`;
+  } catch (e) {
+    erro.textContent = "Não foi possível ler os dados. Verifique se o MariaDB está rodando e se o app.py está ativo.";
+  }
+}
+
+atualizar();
+setInterval(atualizar, ATUALIZA_A_CADA_MS);
+</script>
+</body>
+</html>
