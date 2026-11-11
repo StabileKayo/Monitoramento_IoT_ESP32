@@ -24,6 +24,14 @@ UDP_PORT = 5001
 # Se um nó TCP ficar tanto tempo sem enviar nada, consideramos a conexão morta
 TCP_TIMEOUT_SEGUNDOS = 120
 
+# Valor mínimo aceitável de cada grandeza. Abaixo disso, dispara alerta
+LIMITES_MINIMOS = {
+    "temperatura": 18.0,
+    "umidade_ar": 35.0,
+    "umidade_solo": 25.0,
+}
+
+
 def conectar_banco():
     # Abre uma nova conexão com o banco de dados. Cada thread chama isso uma vez,
     return mariadb.connect(**DB_CONFIG)
@@ -61,6 +69,25 @@ def salvar_leituras(conexao, mensagem: dict):
         conexao.commit()
     finally:
         cursor.close()
+
+
+def verificar_limites(mensagem: dict):
+    # Compara cada grandeza com o seu limite mínimo
+    # Retorna (baixas, normais): baixas = {grandeza: valor} abaixo do limite,
+    # normais = lista de grandezas dentro do limite
+    baixas = {}
+    normais = []
+    for grandeza, minimo in LIMITES_MINIMOS.items():
+        valor = mensagem.get(grandeza)
+        # None (null no JSON) significa que o sensor falhou: não é nem baixo nem normal,
+        # então ignoramos para não abrir nem fechar alertas por engano
+        if not isinstance(valor, (int, float)):
+            continue
+        if valor < minimo:
+            baixas[grandeza] = valor
+        else:
+            normais.append(grandeza)
+    return baixas, normais
 
 
 def processar_mensagem(protocolo_esperado, linha_bytes, conexao, origem=""):
