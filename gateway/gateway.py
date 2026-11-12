@@ -90,6 +90,48 @@ def verificar_limites(mensagem: dict):
     return baixas, normais
 
 
+def registrar_alertas(conexao, no_id, baixas, normais):
+    # Abre alerta para cada grandeza baixa e fecha o alerta das que voltaram ao normal
+    # Retorna (novos, resolvidos) para o chamador poder avisar no terminal
+    novos = []
+    resolvidos = []
+    cursor = conexao.cursor()
+    try:
+        for grandeza, valor in baixas.items():
+            # O NOT EXISTS evita duplicar: só insere se ainda não há alerta ativo
+            # para esse nó e grandeza. Fica seguro até se o gateway reiniciar
+            cursor.execute(
+                """
+                INSERT INTO alertas(no_id, grandeza, valor, limite_minimo)
+                SELECT ?, ?, ?, ?
+                FROM DUAL
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM alertas
+                    WHERE no_id = ? AND grandeza = ? AND resolvido_em IS NULL
+                )
+                """,
+                (no_id, grandeza, valor, LIMITES_MINIMOS[grandeza], no_id, grandeza),
+            )
+            if cursor.rowcount > 0:
+                novos.append (grandeza)
+
+        for grandeza in normais:
+            cursor.execute(
+                """
+                UPDATE alertas SET resolvido_em = NOW()
+                WHERE no_id = ? AND grandeza = ? AND resolvido_em IS NULL
+                """,
+                (no_id, grandeza),
+            )
+            if cursor.rowcount > 0:
+                resolvidos.append(grandeza)
+
+        conexao.commit()
+    finally:
+        cursor.close()
+    return novos, resolvidos
+
+
 def processar_mensagem(protocolo_esperado, linha_bytes, conexao, origem=""):
     # Faz o parse do JSON recebido e grava no banco, tratando erros sem derrumar o listener inteiro
     # Um pacote inválido de um nó não pode travar o recebimento dos demais
