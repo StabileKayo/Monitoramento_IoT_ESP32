@@ -46,6 +46,7 @@
   .medidas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .medida b { display: block; font-size: 1.5rem; font-weight: 600; font-variant-numeric: tabular-nums; }
   .medida span { color: var(--suave); font-size: .8rem; }
+  .medida.baixa b { color: var(--alerta); } }
 
   .graficos { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; margin-bottom: 24px; }
   .painel { background: var(--painel); border: 1px solid var(--linha); border-radius: 8px; padding: 16px; }
@@ -67,6 +68,14 @@
 
   .vazio { color: var(--suave); padding: 24px 0; }
   #erro { color: var(--alerta); margin-bottom: 12px; }
+
+  .alertas { display: grid; gap: 8px; margin-bottom: 24px; }
+  .alerta {
+    background: var(--painel); border: 1px solid var(--alerta); border-left-width: 5px;
+    border-radius: 8px; padding: 10px 14px; color: var(--alerta); font-size: .95rem;
+  }
+  .alerta small { color: var(--suave); margin-left: 6px; }
+
 </style>
 </head>
 <body>
@@ -85,6 +94,7 @@
   </header>
 
   <div id="erro" role="alert"></div>
+  <section class="alertas" id="alertas" role="status" aria-live="polite"></section>
   <section class="nos" id="nos" aria-label="Estado dos nós"></section>
   <section class="graficos">
     <div class="painel"><h2>Temperatura (°C)</h2><canvas id="g-temperatura"></canvas></div>
@@ -117,6 +127,8 @@ const PALETA = ["#2e7d4f", "#c2571f", "#2f6fb0", "#8a5bb5", "#b08a1e", "#1e8a8a"
 const GRANDEZAS = ["temperatura", "umidade_ar", "umidade_solo"];
 const UNIDADES = { temperatura: "°C", umidade_ar: "%", umidade_solo: "%" };
 
+const ROTULOS = { temperatura: "Temperatura", umidade_ar: "Umidade do ar", umidade_solo: "Umidade do solo" };
+
 let horas = 6;
 const coresPorNo = {};
 
@@ -136,7 +148,21 @@ function tempoRelativo(seg) {
   return `há ${Math.floor(seg / 3600)} h`;
 }
 
-function desenharNos(ultimas) {
+function desenharAlertas(ativos) {
+  // Sem alertas ativos a faixa fica vazia e não ocupa espaço
+  document.getElementById("alertas").innerHTML = ativos.map(a => `
+    <div class="alerta">
+      <b>${a.no_id}</b>: ${ROTULOS[a.grandeza]} baixa
+      (${fmt(a.valor)} ${UNIDADES[a.grandeza]}, mínimo ${fmt(a.limite_minimo)} ${UNIDADES[a.grandeza]})
+      <small>desde ${a.criado_em}</small>
+    </div>`).join("");
+}
+
+function desenharNos(ultimas, ativos) {
+  // Conjunto "no|grandeza" dos alertas ativos, para consulta rápida ao montar cada card
+  const emAlerta = new Set(ativos.map(a => a.no_id + "|" + a.grandeza));
+  const classe = (n, g) => emAlerta.has(n.no_id + "|" + g) ? "medida baixa" : "medida";
+  
   const caixa = document.getElementById("nos");
   if (!ultimas.length) {
     caixa.innerHTML = '<div class="vazio">Nenhuma leitura no banco ainda. Inicie o gateway e os nós.</div>';
@@ -149,9 +175,9 @@ function desenharNos(ultimas) {
         <div class="no-topo"><span class="no-nome">${n.no_id}</span><span class="no-proto">${n.protocolo}</span></div>
         <div class="estado ${online ? "ok" : "off"}">${online ? "Recebendo" : "Sem sinal"}, última leitura ${tempoRelativo(n.idade_s)}</div>
         <div class="medidas">
-          <div class="medida"><b>${fmt(n.temperatura)}°</b><span>Temperatura</span></div>
-          <div class="medida"><b>${fmt(n.umidade_ar, 0)}%</b><span>Ar</span></div>
-          <div class="medida"><b>${fmt(n.umidade_solo, 0)}%</b><span>Solo</span></div>
+          <div class="${classe(n, "temperatura")}"><b>${fmt(n.temperatura)}°</b><span>Temperatura</span></div>
+          <div class="${classe(n, "umidade_ar")}"><b>${fmt(n.umidade_ar, 0)}%</b><span>Ar</span></div>
+          <div class="${classe(n, "umidade_solo")}"><b>${fmt(n.umidade_solo, 0)}%</b><span>Solo</span></div>
         </div>
       </article>`;
   }).join("");
@@ -223,12 +249,14 @@ function desenharTabela(estatisticas) {
 async function atualizar() {
   const erro = document.getElementById("erro");
   try {
-    const [resumo, series] = await Promise.all([
+    const [resumo, series, alertas] = await Promise.all([
         fetch(`/api/resumo?horas=${horas}`).then(r => { if (!r.ok) throw new Error("resumo"); return r.json(); }),
-        fetch(`/api/series?horas=${horas}`).then(r => { if (!r.ok) throw new Error("séries"); return r.json(); })
+        fetch(`/api/series?horas=${horas}`).then(r => { if (!r.ok) throw new Error("séries"); return r.json(); }),
+        fetch("/api/alertas").then(r => { if (!r.ok) throw new Error("alertas"); return r.json(); })
     ]);
     erro.textContent = "";
-    desenharNos(resumo.ultimas);
+    desenharNos(resumo.ultimas, alertas.ativos);
+    desenharAlertas(alertas.ativos);
     desenharTabela(resumo.estatisticas);
     desenharGraficos(series);
     document.getElementById("sub").textContent =
