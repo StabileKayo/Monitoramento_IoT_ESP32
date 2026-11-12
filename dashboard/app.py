@@ -41,6 +41,15 @@ def horas_da_requisicao():
     return max(1, min(horas, 720))
 
 
+def formatar_datas(linhas):
+    # jsonify não sabe converter datetime direto, então viramos texto
+    for linha in linhas:
+        for campo in ("criado_em", "resolvido_em"):
+            if linha.get(campo) is not None:
+                linha[campo] = linha[campo].isoformat(sep=" ")
+    return linhas
+
+
 @app.route("/")
 def index():
     return render_template("index.html", limite_sem_sinal=LIMITE_SEM_SINAL_SEGUNDOS)
@@ -126,6 +135,34 @@ def api_series():
             no[grandeza].append({"x": x, "y": None if valor is None else round(float(valor), 1)})
 
     return jsonify(series)
+
+
+@app.route("/api/alertas")
+def api_alertas():
+    # Alertas ainda abertos (valor continua abaixo do limite)
+    ativos = consultar(
+        """
+        SELECT id, no_id, grandeza, valor, limite_minimo, criado_em
+        FROM alertas
+        WHERE resolvido_em IS NULL
+        ORDER BY criado_em DESC
+        """
+    )
+
+    # Últimos alertas, ativos ou já resolvidos
+    historico = consultar(
+        """
+        SELECT id, no_id, grandeza, valor, limite_minimo, criado_em, resolvido_em
+        FROM alertas
+        ORDER BY criado_em DESC
+        LIMIT 20
+        """
+    )
+
+    return jsonify({
+        "ativos": formatar_datas(ativos),
+        "historico": formatar_datas(historico),
+    })
 
 
 if __name__ == "__main__":
