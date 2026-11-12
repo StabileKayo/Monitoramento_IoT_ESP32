@@ -139,6 +139,15 @@ def processar_mensagem(protocolo_esperado, linha_bytes, conexao, origem=""):
         mensagem = json.loads(linha_bytes.decode("utf-8"))
         salvar_leituras(conexao, mensagem)
         print(f"[{protocolo_esperado}{origem}] Gravado: {mensagem}")
+
+        # Depois de gravar a leitura, confere os limites e atualiza os alertas
+        baixas, normais = verificar_limites(mensagem)
+        novos, resolvidos = registrar_alertas(conexao, mensagem["no_id"], baixas, normais)
+        for grandeza in novos:
+            print(f"[ALERTA] {mensagem['no_id']}: {grandeza} = {baixas[grandeza]}"
+                  f"(mínimo {LIMITES_MINIMOS[grandeza]})")
+        for grandeza in resolvidos:
+            print(f"[OK] {mensagem['no_id']}: {grandeza} voltou ao normal")
     except (json.JSONDecodeError, UnicodeDecodeError):
         # Pacote corrompido ou não-JSON: registra e segue em frente
         print(f"[{protocolo_esperado}{origem}] Mensagem inválida (não era JSON): {linha_bytes!r}")
